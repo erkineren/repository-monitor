@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  repository-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: repository-monitor
+    restart: unless-stopped
+    volumes:
+      - ./.env:/app/.env
+    environment:
+      - TZ=Europe/Istanbul

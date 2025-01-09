@@ -12,6 +12,5 @@ RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
 COPY --from=builder /app/notifier .
-COPY .env.example .env
 
 CMD ["./notifier"] 
