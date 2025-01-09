@@ -23,7 +23,7 @@ type Notification struct {
 
 func main() {
 	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found")
+		log.Printf("Warning: .env file not found. But it's okay, we'll use the environment variables.")
 	}
 
 	// Initialize GitHub client
