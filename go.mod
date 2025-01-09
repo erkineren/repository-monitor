@@ -1,4 +1,4 @@
-module github.com/erkineren/github-attention-notifier
+module github.com/erkineren/repository-monitor
 
 go 1.21
 

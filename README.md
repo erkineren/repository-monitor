@@ -1,4 +1,4 @@
-# GitHub Attention Notifier
+# Repository Monitor
 
 A Go application that sends Telegram notifications when you are mentioned or assigned as a reviewer on GitHub pull requests and comments.
 
@@ -62,7 +62,7 @@ go run main.go
 
 Build the image:
 ```bash
-docker build -t github-attention-notifier .
+docker build -t repository-monitor .
 ```
 
 Run the container:
@@ -70,7 +70,7 @@ Run the container:
 docker run -d \
   --name github-notifier \
   --env-file .env \
-  github-attention-notifier
+  repository-monitor
 ```
 
 ## License
