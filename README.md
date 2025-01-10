@@ -1,78 +1,103 @@
-# Repository Monitor
+# GitHub Repository Monitor
 
-A Go application that sends Telegram notifications when you are mentioned or assigned as a reviewer on GitHub pull requests and comments.
+A Telegram bot that monitors your GitHub repositories and sends notifications about:
+- Pull Requests
+- Issues
+- Releases
+
+## Project Structure
+
+```
+repository-monitor/
+├── cmd/
+│   └── monitor/
+│       └── main.go           # Application entry point
+├── internal/
+│   ├── bot/
+│   │   ├── handler.go        # Telegram bot command handlers
+│   │   └── telegram.go       # Telegram bot implementation
+│   ├── github/
+│   │   ├── client.go         # GitHub client
+│   │   └── notifications.go  # GitHub notifications logic
+│   ├── models/
+│   │   ├── account.go        # GitHub account model
+│   │   ├── notification.go   # Notification models
+│   │   └── user.go          # User model
+│   ├── store/
+│   │   ├── postgres/
+│   │   │   └── store.go     # PostgreSQL implementation
+│   │   └── store.go         # Store interface
+│   └── config/
+│       └── config.go        # Configuration management
+├── .env.example             # Example environment variables
+├── docker-compose.yml       # Docker Compose configuration
+├── Dockerfile              # Docker build configuration
+└── README.md              # This file
+
+```
 
 ## Features
 
-- Notifications for mentions in PRs and comments
-- Notifications for PR review requests
-- Configurable polling interval
-- Docker support
+- Monitor multiple GitHub accounts
+- Receive notifications for:
+  - New or updated Pull Requests
+  - New or updated Issues
+  - New Releases
+- Toggle notifications per GitHub account
+- Configurable notification intervals
+- Persistent storage using PostgreSQL
 
-## Setup
+## Configuration
 
-### Prerequisites
+Copy `.env.example` to `.env` and configure the following variables:
 
-- Go 1.21 or higher (if running locally)
-- Docker (if running containerized)
-- GitHub account
-- Telegram account
+- `TELEGRAM_TOKEN`: Your Telegram bot token (get it from [@BotFather](https://t.me/botfather))
+- `POSTGRES_URL`: PostgreSQL connection URL
+- `RENOTIFY_INTERVAL`: Hours to wait before re-notifying about the same item (default: 24)
+- `NOTIFY_INTERVAL`: Minutes between GitHub checks (default: 5)
+- `POLLING_TIMEOUT`: Seconds for Telegram long polling timeout (default: 60)
+- `DEBUG`: Enable debug logging (default: false)
 
-### Configuration
+## Running with Docker
 
-1. **GitHub Token**
-   - Go to GitHub Settings > Developer settings > Personal access tokens > Tokens (classic)
-   - Generate a new token with the following permissions:
-     - `notifications` - to read notifications
-     - `repo` - to access repository data
-   - Copy the token
+1. Configure environment variables in `.env`
+2. Run with Docker Compose:
+   ```bash
+   docker-compose up -d
+   ```
 
-2. **Telegram Bot Setup**
-   - Message [@BotFather](https://t.me/botfather) on Telegram
-   - Use the `/newbot` command to create a new bot
-   - Copy the bot token provided
-   - Start a chat with your bot
-   - Get your chat ID by:
-     1. Starting the bot
-     2. Sending it a message
-     3. Accessing: `https://api.telegram.org/bot<YourBOTToken>/getUpdates`
-     4. Look for the `chat.id` in the response
+## Running Locally
 
-3. **Environment Variables**
-   - Copy `.env.example` to `.env`
-   - Fill in the values:
-     ```
-     GITHUB_TOKEN=your_github_personal_access_token
-     GITHUB_USERNAME=your_github_username
-     TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-     TELEGRAM_CHAT_ID=your_telegram_chat_id
-     POLL_INTERVAL=60
-     ```
+1. Install dependencies:
+   ```bash
+   go mod download
+   ```
 
-## Running the Application
+2. Configure environment variables in `.env`
 
-### Local Development
+3. Run the application:
+   ```bash
+   go run cmd/monitor/main.go
+   ```
 
-```bash
-go mod download
-go run main.go
-```
+## Bot Commands
 
-### Docker
+- `/start` - Show welcome message and available commands
+- `/add <username> <token>` - Add a GitHub account to monitor
+- `/remove <username>` - Remove a GitHub account
+- `/toggle <username>` - Toggle notifications for a GitHub account
+- `/list` - List monitored GitHub accounts
+- `/help` - Show help message
 
-Build the image:
-```bash
-docker build -t repository-monitor .
-```
+## Development
 
-Run the container:
-```bash
-docker run -d \
-  --name github-notifier \
-  --env-file .env \
-  repository-monitor
-```
+The project follows standard Go project layout and best practices:
+- Code is organized into packages by functionality
+- Dependencies are managed with Go modules
+- Configuration is handled through environment variables
+- Business logic is separated from infrastructure concerns
+- Interfaces are used for dependency injection and testing
 
 ## License
 
-MIT 
+This project is licensed under the MIT License - see the LICENSE file for details. 
