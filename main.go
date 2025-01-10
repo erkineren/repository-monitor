@@ -296,52 +296,36 @@ func escapeMarkdown(text string) string {
 }
 
 func sendTelegramMessage(bot *tgbotapi.BotAPI, chatID int64, notification Notification) error {
-	escapedType := strings.NewReplacer(
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
-		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
-	).Replace(notification.Type)
+	// Create a standardized emoji map for notification types
+	emojiMap := map[string]string{
+		"mention":          "💬",
+		"review_requested": "👀",
+	}
 
-	escapedMessage := strings.NewReplacer(
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
-		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
-	).Replace(notification.Message)
+	// Get emoji for notification type, default to 🔔 if type not found
+	emoji := emojiMap[notification.Type]
+	if emoji == "" {
+		emoji = "🔔"
+	}
 
-	message := fmt.Sprintf("*%s*\n%s\n[View on GitHub](%s)",
+	// Format the type in a more readable way
+	typeDisplay := strings.ReplaceAll(notification.Type, "_", " ")
+	typeDisplay = strings.Title(typeDisplay)
+
+	// Escape all parts of the message
+	escapedType := escapeMarkdown(typeDisplay)
+	escapedMessage := escapeMarkdown(notification.Message)
+	escapedURL := escapeMarkdown(notification.URL)
+
+	// Build a standardized message format:
+	// Emoji Type
+	// Message content
+	// Link to GitHub
+	message := fmt.Sprintf("%s *%s*\n\n%s\n\n🔗 [View on GitHub](%s)",
+		emoji,
 		escapedType,
 		escapedMessage,
-		notification.URL,
+		escapedURL,
 	)
 
 	msg := tgbotapi.NewMessage(chatID, message)
@@ -431,97 +415,163 @@ func checkGitHubNotifications(ctx context.Context, client *github.Client, userna
 				continue
 			}
 
-			message := fmt.Sprintf("%s: %s", notif.GetReason(), notif.Subject.GetTitle())
+			// Build a standardized message format
+			var message string
+			repoInfo := fmt.Sprintf("📁 %s/%s", owner, repo)
+			title := fmt.Sprintf("📝 %s", notif.Subject.GetTitle())
 
-			// If it's a mention, fetch the comment details
-			if notif.GetReason() == "mention" {
-				// Get the comment URL and fetch comment details
-				commentURL := notif.Subject.GetLatestCommentURL()
-				if commentURL == "" || !strings.Contains(commentURL, "/comments/") {
-					// If there's no comment URL or it's not a comment URL (i.e., it's a mention in the issue/PR body)
-					message = fmt.Sprintf("%s: %s\n👤 Mentioned in %s body",
-						notif.GetReason(),
-						notif.Subject.GetTitle(),
-						subjectType,
+			// Handle different notification types
+			switch notif.GetReason() {
+			case "review_requested":
+				// Get PR details to show who requested the review
+				var requestedBy string
+				if subjectType == "PullRequest" {
+					pr, _, err := client.PullRequests.Get(ctx, owner, repo, itemNum)
+					if err == nil {
+						requestedBy = pr.GetUser().GetLogin()
+					}
+				}
+
+				if requestedBy != "" {
+					message = fmt.Sprintf("%s\n%s\n\n👀 %s requested your review on this pull request",
+						repoInfo,
+						title,
+						requestedBy,
 					)
 				} else {
+					message = fmt.Sprintf("%s\n%s\n\n👀 Your review was requested on this pull request",
+						repoInfo,
+						title,
+					)
+				}
+
+			case "mention":
+				// Get the comment URL and fetch comment details
+				commentURL := notif.Subject.GetLatestCommentURL()
+
+				// Check if user has already replied to this PR/Issue
+				hasReplied := false
+				comments, _, err := client.Issues.ListComments(ctx, owner, repo, itemNum, nil)
+				if err == nil {
+					for _, comment := range comments {
+						if comment.GetUser().GetLogin() == username {
+							hasReplied = true
+							break
+						}
+					}
+				}
+
+				// If user has replied, mark as read and skip
+				if hasReplied {
+					if _, err := client.Activity.MarkThreadRead(ctx, notif.GetID()); err != nil {
+						log.Printf("Failed to mark notification as read: %v", err)
+					}
+					continue
+				}
+
+				if commentURL == "" || !strings.Contains(commentURL, "/comments/") {
+					// If there's no comment URL or it's not a comment URL (i.e., it's a mention in the issue/PR body)
+					var authorUsername string
+					var mentionContent string
+
+					if subjectType == "PullRequest" {
+						pr, _, err := client.PullRequests.Get(ctx, owner, repo, itemNum)
+						if err == nil {
+							authorUsername = pr.GetUser().GetLogin()
+							mentionContent = pr.GetBody()
+						}
+					} else if subjectType == "Issue" {
+						issue, _, err := client.Issues.Get(ctx, owner, repo, itemNum)
+						if err == nil {
+							authorUsername = issue.GetUser().GetLogin()
+							mentionContent = issue.GetBody()
+						}
+					}
+
+					// Skip if it's a self-mention
+					if authorUsername == username {
+						// Mark notification as read since it's a self-mention
+						if _, err := client.Activity.MarkThreadRead(ctx, notif.GetID()); err != nil {
+							log.Printf("Failed to mark notification as read: %v", err)
+						}
+						continue
+					}
+
+					// Truncate long descriptions to a reasonable length
+					if len(mentionContent) > 300 {
+						mentionContent = mentionContent[:297] + "..."
+					}
+
+					message = fmt.Sprintf("%s\n%s\n\n👤 %s mentioned you in the %s description:\n\n%s",
+						repoInfo,
+						title,
+						authorUsername,
+						strings.ToLower(subjectType),
+						mentionContent,
+					)
+				} else {
+					// Handle comment mentions
 					// Parse the comment URL to get the comment ID
 					commentParts := strings.Split(commentURL, "/")
 					commentIDStr := commentParts[len(commentParts)-1]
 					commentID, _ := strconv.Atoi(commentIDStr)
 
-					// Fetch the comment details
-					comment, resp, err := client.Issues.GetComment(ctx, owner, repo, int64(commentID))
-					if err != nil {
-						// Check if it's a 404 error
-						if resp != nil && resp.StatusCode == 404 {
-							log.Printf("Comment not found (might be deleted) - owner: %s, repo: %s, comment: %d", owner, repo, commentID)
-							// Try to mark the notification as read since we can't process it
-							if _, err := client.Activity.MarkThreadRead(ctx, notif.GetID()); err != nil {
-								log.Printf("Failed to mark notification as read: %v", err)
+					// Get comment details
+					var comment *github.IssueComment
+					var err error
+					if strings.Contains(commentURL, "/issues/comments/") {
+						comment, _, err = client.Issues.GetComment(ctx, owner, repo, int64(commentID))
+					} else if strings.Contains(commentURL, "/pulls/comments/") {
+						var prComment *github.PullRequestComment
+						prComment, _, err = client.PullRequests.GetComment(ctx, owner, repo, int64(commentID))
+						if err == nil && prComment != nil {
+							comment = &github.IssueComment{
+								User: prComment.User,
+								Body: prComment.Body,
 							}
-							continue
 						}
+					}
+
+					if err != nil {
 						log.Printf("Error getting comment details: %v", err)
 						continue
 					}
 
-					// Skip if the comment author is the authenticated user
+					// Skip if the comment author is the authenticated user (self-mention)
 					if comment.GetUser().GetLogin() == username {
+						// Mark notification as read since it's a self-mention
+						if _, err := client.Activity.MarkThreadRead(ctx, notif.GetID()); err != nil {
+							log.Printf("Failed to mark notification as read: %v", err)
+						}
 						continue
 					}
 
-					// Get all comments after this mention
-					sort := "created"
-					direction := "asc"
-					since := comment.GetCreatedAt().Time
-					opts := &github.IssueListCommentsOptions{
-						Since:     &since,
-						Sort:      &sort,
-						Direction: &direction,
-					}
-					laterComments, _, err := client.Issues.ListComments(ctx, owner, repo, itemNum, opts)
-					if err == nil {
-						hasReplied := false
-						for _, laterComment := range laterComments {
-							// Skip the original comment
-							if laterComment.GetID() == comment.GetID() {
-								continue
-							}
-							// Check if user has replied after this mention
-							if laterComment.GetUser().GetLogin() == username {
-								hasReplied = true
-								break
-							}
-						}
-						// Skip if user has already replied
-						if hasReplied {
-							// Mark notification as read since user has replied
-							if _, err := client.Activity.MarkThreadRead(ctx, notif.GetID()); err != nil {
-								log.Printf("Failed to mark notification as read: %v", err)
-							}
-							continue
-						}
+					// Truncate long comments to a reasonable length (e.g., 300 characters)
+					commentBody := comment.GetBody()
+					if len(commentBody) > 300 {
+						commentBody = commentBody[:297] + "..."
 					}
 
-					message = fmt.Sprintf("%s: %s\n👤 %s commented: %s",
-						notif.GetReason(),
-						notif.Subject.GetTitle(),
+					message = fmt.Sprintf("%s\n%s\n\n👤 %s mentioned you in a comment:\n\n%s",
+						repoInfo,
+						title,
 						comment.GetUser().GetLogin(),
-						comment.GetBody(),
+						commentBody,
 					)
 				}
 			}
 
-			notifications = append(notifications, Notification{
-				Type:    notif.GetReason(),
-				Message: message,
-				URL:     htmlURL,
-			})
+			if message != "" {
+				notifications = append(notifications, Notification{
+					Type:    notif.GetReason(),
+					Message: message,
+					URL:     htmlURL,
+				})
+			}
 		}
 	}
 
-	// Check review requests (already filtered for open PRs by the search query)
+	// Check review requests from search (keep existing code but update message format)
 	searchQuery := fmt.Sprintf("review-requested:%s is:open is:pr", username)
 	searchOpts := &github.SearchOptions{}
 	prs, resp, err := client.Search.Issues(ctx, searchQuery, searchOpts)
@@ -535,9 +585,21 @@ func checkGitHubNotifications(ctx context.Context, client *github.Client, userna
 	}
 
 	for _, pr := range prs.Issues {
+		repoURL := pr.GetRepositoryURL()
+		repoParts := strings.Split(repoURL, "/")
+		owner := repoParts[len(repoParts)-2]
+		repo := repoParts[len(repoParts)-1]
+
+		message := fmt.Sprintf("📁 %s/%s\n📝 %s\n\n👀 %s requested your review on this pull request",
+			owner,
+			repo,
+			pr.GetTitle(),
+			pr.GetUser().GetLogin(),
+		)
+
 		notifications = append(notifications, Notification{
 			Type:    "review_requested",
-			Message: fmt.Sprintf("Review requested: %s", pr.GetTitle()),
+			Message: message,
 			URL:     pr.GetHTMLURL(),
 		})
 	}
