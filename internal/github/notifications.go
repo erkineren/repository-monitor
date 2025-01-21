@@ -13,38 +13,29 @@ import (
 func (c *Client) GetNotifications(ctx context.Context, username string) ([]models.Notification, error) {
 	var notifications []models.Notification
 
-	// Get user's repositories
-	opts := &github.RepositoryListOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
+	opts := &github.NotificationListOptions{
+		All:           true,
+		Participating: true,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
 	}
 
 	for {
-		repos, resp, err := c.client.Repositories.List(ctx, username, opts)
+		ghNotifications, resp, err := c.client.Activity.ListNotifications(ctx, opts)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list repositories: %v", err)
+			return nil, fmt.Errorf("failed to list notifications: %v", err)
 		}
 
-		for _, repo := range repos {
-			// Check pull requests
-			prNotifications, err := c.checkPullRequests(ctx, repo)
-			if err != nil {
-				continue
+		for _, n := range ghNotifications {
+			if n.GetUnread() {
+				notification := models.Notification{
+					Type:    string(n.GetReason()),
+					Message: fmt.Sprintf("[%s] %s", n.GetRepository().GetFullName(), n.GetSubject().GetTitle()),
+					URL:     n.GetSubject().GetURL(),
+				}
+				notifications = append(notifications, notification)
 			}
-			notifications = append(notifications, prNotifications...)
-
-			// Check issues
-			issueNotifications, err := c.checkIssues(ctx, repo)
-			if err != nil {
-				continue
-			}
-			notifications = append(notifications, issueNotifications...)
-
-			// Check releases
-			releaseNotifications, err := c.checkReleases(ctx, repo)
-			if err != nil {
-				continue
-			}
-			notifications = append(notifications, releaseNotifications...)
 		}
 
 		if resp.NextPage == 0 {
@@ -59,7 +50,8 @@ func (c *Client) GetNotifications(ctx context.Context, username string) ([]model
 func (c *Client) checkPullRequests(ctx context.Context, repo *github.Repository) ([]models.Notification, error) {
 	var notifications []models.Notification
 
-	opts := &github.PullRequestListOptions{
+	// Check for open PRs
+	openOpts := &github.PullRequestListOptions{
 		State:     "open",
 		Sort:      "updated",
 		Direction: "desc",
@@ -68,22 +60,50 @@ func (c *Client) checkPullRequests(ctx context.Context, repo *github.Repository)
 		},
 	}
 
-	prs, _, err := c.client.PullRequests.List(ctx, repo.GetOwner().GetLogin(), repo.GetName(), opts)
+	openPRs, _, err := c.client.PullRequests.List(ctx, repo.GetOwner().GetLogin(), repo.GetName(), openOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, pr := range prs {
-		if time.Since(pr.GetUpdatedAt().Time) > 24*time.Hour {
-			continue
-		}
+	// Check for recently merged PRs
+	mergedOpts := &github.PullRequestListOptions{
+		State:     "closed",
+		Sort:      "updated",
+		Direction: "desc",
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
 
-		notification := models.Notification{
-			Type:    "pull_request",
-			Message: fmt.Sprintf("[%s] PR #%d: %s", repo.GetFullName(), pr.GetNumber(), pr.GetTitle()),
-			URL:     pr.GetHTMLURL(),
+	mergedPRs, _, err := c.client.PullRequests.List(ctx, repo.GetOwner().GetLogin(), repo.GetName(), mergedOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process open PRs (new PRs)
+	for _, pr := range openPRs {
+		// Only notify about PRs created in the last 24 hours
+		if time.Since(pr.GetCreatedAt().Time) <= 24*time.Hour {
+			notification := models.Notification{
+				Type:    "new_pull_request",
+				Message: fmt.Sprintf("[%s] New PR #%d: %s by %s", repo.GetFullName(), pr.GetNumber(), pr.GetTitle(), pr.GetUser().GetLogin()),
+				URL:     pr.GetHTMLURL(),
+			}
+			notifications = append(notifications, notification)
 		}
-		notifications = append(notifications, notification)
+	}
+
+	// Process merged PRs
+	for _, pr := range mergedPRs {
+		// Only notify about PRs merged in the last 24 hours
+		if pr.GetMerged() && time.Since(pr.GetUpdatedAt().Time) <= 24*time.Hour {
+			notification := models.Notification{
+				Type:    "merged_pull_request",
+				Message: fmt.Sprintf("[%s] Merged PR #%d: %s by %s", repo.GetFullName(), pr.GetNumber(), pr.GetTitle(), pr.GetUser().GetLogin()),
+				URL:     pr.GetHTMLURL(),
+			}
+			notifications = append(notifications, notification)
+		}
 	}
 
 	return notifications, nil

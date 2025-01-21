@@ -46,6 +46,20 @@ func main() {
 	}
 	log.Println("Telegram bot initialized successfully")
 
+	// Send startup message to all users
+	users, err := store.GetAllUsers()
+	if err != nil {
+		log.Printf("Warning: Failed to get users for startup notification: %v", err)
+	} else {
+		startupMsg := "🚀 GitHub Repository Monitor has started!\n\nI'm now monitoring your repositories for notifications."
+		for _, user := range users {
+			msg := tgbotapi.NewMessage(user.ChatID, startupMsg)
+			if _, err := telegramBot.API.Send(msg); err != nil {
+				log.Printf("Warning: Failed to send startup message to user %d: %v", user.ChatID, err)
+			}
+		}
+	}
+
 	// Initialize bot handler
 	handler := bot.NewHandler(telegramBot, store)
 
