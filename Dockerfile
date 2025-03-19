@@ -12,6 +12,5 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 COPY --from=builder /app/monitor .
-COPY .env.example .env
 
 CMD ["./monitor"] 

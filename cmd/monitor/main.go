@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -37,6 +38,18 @@ func main() {
 	}
 	log.Println("Database connection established successfully")
 	defer store.Close()
+
+	// Start health check endpoint
+	go func() {
+		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+		})
+		log.Println("Starting health check endpoint on :8080...")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Printf("Health check server error: %v", err)
+		}
+	}()
 
 	// Initialize Telegram bot
 	log.Println("Initializing Telegram bot...")
